@@ -1,5 +1,5 @@
 from textual.app import App, ComposeResult
-from textual.widgets import Static, TextArea, RichLog, Label
+from textual.widgets import Static, TextArea, RichLog, Label, Footer
 from textual.reactive import Reactive, reactive
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -123,6 +123,9 @@ class CodeTranslateApp(App[None]):
     日本語⇔英語翻訳TUIツールのエントリーポイントです。
     """
 
+    TITLE = "CodeTranslate"
+    SUB_TITLE = "TranslateGemma コーディング翻訳"
+
     def __init__(self):
         super().__init__()
         self.translator = CodeTranslator()
@@ -187,7 +190,7 @@ class CodeTranslateApp(App[None]):
         Binding("ctrl+y", "copy_result", "コピー", show=True, priority=True),
         Binding("ctrl+l", "clear", "クリア", show=True, priority=True),
         Binding("ctrl+h", "toggle_history", "履歴", show=True, priority=True),
-        Binding("q", "quit", "終了", show=True),
+        Binding("ctrl+q", "quit", "終了", show=True),
     ]
     
     def compose(self) -> ComposeResult:
@@ -219,6 +222,9 @@ class CodeTranslateApp(App[None]):
 
         # 下部：ステータスバー
         yield StatusBar(id="status-bar")
+
+        # Footer: キーバインド表示
+        yield Footer()
     
     def on_mount(self) -> None:
         """アプリケーション起動時の初期化。

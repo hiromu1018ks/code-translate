@@ -972,3 +972,111 @@ class TestCodeTranslateAppIntegrationFullFlow:
 
             # translate should NOT be called
             assert not mock_translate.called, "translate should NOT be called for empty text"
+
+
+class TestTask2_5FooterAndBindings:
+    """Tests for Task 2-5: Footer with key binding help display."""
+
+    async def test_app_has_title_attribute(self):
+        """アプリにTITLE属性が設定されていることを確認"""
+        from app import CodeTranslateApp
+
+        app = CodeTranslateApp()
+
+        assert hasattr(app, "TITLE"), "App should have TITLE attribute"
+        assert app.TITLE == "CodeTranslate", f"TITLE should be 'CodeTranslate', got '{app.TITLE}'"
+
+    async def test_app_has_subtitle_attribute(self):
+        """アプリにSUB_TITLE属性が設定されていることを確認"""
+        from app import CodeTranslateApp
+
+        app = CodeTranslateApp()
+
+        assert hasattr(app, "SUB_TITLE"), "App should have SUB_TITLE attribute"
+        assert app.SUB_TITLE == "TranslateGemma コーディング翻訳", \
+            f"SUB_TITLE should be 'TranslateGemma コーディング翻訳', got '{app.SUB_TITLE}'"
+
+    async def test_ctrl_q_binding_exists_and_shows_in_footer(self):
+        """Ctrl+Qキーバインディングが存在し、フッターに表示されることを確認"""
+        from app import CodeTranslateApp
+
+        app = CodeTranslateApp()
+
+        quit_bindings = [b for b in app.BINDINGS if "ctrl+q" in b.key.lower()]
+        assert len(quit_bindings) > 0, "Should have Ctrl+Q binding for quit"
+
+        quit_binding = quit_bindings[0]
+        assert quit_binding.show is True, "Ctrl+Q should have show=True to appear in footer"
+
+        assert quit_binding.description == "終了", \
+            f"Description should be '終了', got '{quit_binding.description}'"
+
+    async def test_all_required_bindings_have_correct_show_flags(self):
+        """必要なすべてのキーバインドが適切なshowフラグを持っていることを確認"""
+        from app import CodeTranslateApp
+
+        app = CodeTranslateApp()
+
+        required_bindings = {
+            "ctrl+j": {"show": True, "description": "翻訳"},
+            "ctrl+enter": {"show": False, "description": "翻訳"},
+            "tab": {"show": True, "description": "方向切替"},
+            "ctrl+y": {"show": True, "description": "コピー"},
+            "ctrl+l": {"show": True, "description": "クリア"},
+            "ctrl+h": {"show": True, "description": "履歴"},
+            "ctrl+q": {"show": True, "description": "終了"},
+        }
+
+        for key_str, expected in required_bindings.items():
+            matching_bindings = [b for b in app.BINDINGS if key_str in b.key.lower()]
+
+            assert len(matching_bindings) > 0, f"Should have binding for {key_str}"
+
+            binding = matching_bindings[0]
+
+            assert binding.show == expected["show"], \
+                f"{key_str} should have show={expected['show']}, got {binding.show}"
+
+            if expected["show"]:
+                assert binding.description == expected["description"], \
+                    f"{key_str} description should be '{expected['description']}', got '{binding.description}'"
+
+    async def test_ctrl_q_triggers_quit_action(self):
+        """Ctrl+Qキーでアプリが終了することを確認"""
+        from app import CodeTranslateApp
+
+        async with CodeTranslateApp().run_test() as pilot:
+            call_tracker = {"called": False}
+            original_quit = pilot.app.action_quit if hasattr(pilot.app, "action_quit") else None
+
+            def mock_quit():
+                call_tracker["called"] = True
+
+            if original_quit:
+                pilot.app.action_quit = mock_quit
+
+            await pilot.press("ctrl+q")
+            await pilot.pause()
+            assert call_tracker["called"], "Ctrl+Q should trigger quit action"
+
+    async def test_bindings_count_correct(self):
+        """正しい数のキーバインドが設定されていることを確認"""
+        from app import CodeTranslateApp
+
+        app = CodeTranslateApp()
+
+        assert len(app.BINDINGS) >= 7, f"Should have at least 7 bindings, got {len(app.BINDINGS)}"
+
+    async def test_no_duplicate_visible_bindings(self):
+        """表示されるキーバインドに重複がないことを確認"""
+        from app import CodeTranslateApp
+
+        app = CodeTranslateApp()
+
+        visible_bindings = [b for b in app.BINDINGS if b.show]
+
+        visible_keys = [b.key.lower() for b in visible_bindings]
+        visible_keys_set = set(visible_keys)
+
+        assert len(visible_keys) == len(visible_keys_set), \
+            f"Visible bindings should have unique keys. Duplicates found: {[k for k in visible_keys if visible_keys.count(k) > 1]}"
