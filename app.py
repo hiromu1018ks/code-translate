@@ -1,9 +1,15 @@
 from textual.app import App, ComposeResult
-from textual.widgets import Static, TextArea, RichLog, Footer
-from textual.reactive import reactive
+from textual.widgets import Static, TextArea, RichLog
+from textual.reactive import Reactive, reactive
 from textual.binding import Binding
 from textual.containers import Vertical
-from typing import Literal
+from textual import work
+from typing import Literal, TYPE_CHECKING, cast
+
+from translator import CodeTranslator, TranslationResult
+
+if TYPE_CHECKING:
+    from app import DirectionToggle, StatusBar
 
 
 class DirectionToggle(Static):
@@ -12,7 +18,7 @@ class DirectionToggle(Static):
     日本語→英語 / 英語→日本語の方向を表示し、Tabキーで切り替えます。
     """
     
-    direction: Literal["ja_to_en", "en_to_ja"] = reactive("ja_to_en")
+    direction: Reactive[Literal["ja_to_en", "en_to_ja"]] = reactive("ja_to_en")
     
     DEFAULT_CSS = """
     DirectionToggle {
@@ -63,7 +69,11 @@ class StatusBar(Static):
     翻訳状態（待機/翻訳中/完了/エラー）を表示します。
     """
     
-    status_text: str = reactive("")
+    status_text: Reactive[str] = reactive("")
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._style: str = ""
     
     DEFAULT_CSS = """
     StatusBar {
@@ -82,6 +92,7 @@ class StatusBar(Static):
             text: 表示するステータステキスト
             style: Textualのスタイル（例: "bold", "italic", "red"）
         """
+        self._style = style
         self.status_text = text
         if style:
             styled_text = f"[{style}]{text}[/{style}]"
@@ -98,15 +109,23 @@ class StatusBar(Static):
         """
         # Display is updated by set_status() directly
         # self.update(display_text) is called by reactive() when status_text changes
-        styled_text = f"[{self._style}]{new_value}[/{self._style}]" if hasattr(self, '_style') else new_value
+        if self._style:
+            styled_text = f"[{self._style}]{new_value}[/{self._style}]"
+        else:
+            styled_text = new_value
         self.update(styled_text)
 
 
-class CodeTranslateApp(App):
+class CodeTranslateApp(App[None]):
     """CodeTranslate TUI メインアプリケーション。
-    
+
     日本語⇔英語翻訳TUIツールのエントリーポイントです。
     """
+
+    def __init__(self):
+        super().__init__()
+        self.translator = CodeTranslator()
+        self._is_translating: bool = False
     
     CSS = """
     Screen {
@@ -143,6 +162,8 @@ class CodeTranslateApp(App):
     """
     
     BINDINGS = [
+        Binding("ctrl+j", "translate", "翻訳", show=True, priority=True),
+        Binding("ctrl+enter", "translate", "翻訳", show=False, priority=False),
         Binding("tab", "toggle_direction", "方向切替", show=True, priority=True),
         Binding("q", "quit", "終了", show=True),
     ]
@@ -174,15 +195,76 @@ class CodeTranslateApp(App):
     
     def on_mount(self) -> None:
         """アプリケーション起動時の初期化。
-        
-        入力エリアにフォーカスを設定します。
+
+        入力エリアにフォーカスを設定し、Ollama接続をチェックします。
         """
         input_area = self.query_one("#input")
         input_area.focus()
+
+        success, message = self.translator.check_connection()
+        status_bar = cast(StatusBar, self.query_one("#status-bar"))
+        status_bar.set_status(message)
+
+        if not success:
+            output_area = cast(RichLog, self.query_one("#output"))
+            setup_guide = """Ollamaのセットアップ手順:
+
+1. Ollamaをインストール:
+   curl -fsSL https://ollama.com/install.sh | sh
+
+2. TranslateGemmaモデルをダウンロード:
+   ollama pull translategemma:12b
+
+3. Ollamaを起動:
+   ollama serve
+
+詳細: https://github.com/ollama/ollama"""
+            output_area.write(setup_guide)
     
+    def action_translate(self) -> None:
+        """翻訳を実行するアクション。"""
+        if self._is_translating:
+            return
+
+        input_area = cast(TextArea, self.query_one("#input"))
+        text = input_area.text
+
+        if not text.strip():
+            return
+
+        status_bar = cast(StatusBar, self.query_one("#status-bar"))
+        status_bar.set_status("⏳ 翻訳中...")
+
+        direction_toggle = cast(DirectionToggle, self.query_one("#direction-toggle"))
+        direction = direction_toggle.direction
+
+        self._is_translating = True
+        self._run_translation(text, direction)
+
+    @work(thread=True)
+    def _run_translation(self, text: str, direction: Literal["ja_to_en", "en_to_ja"]) -> None:
+        """バックグラウンドスレッドで翻訳を実行。"""
+        result = self.translator.translate(text, direction)
+        self.call_from_thread(self._display_result, result)
+
+    def _display_result(self, result: TranslationResult) -> None:
+        """翻訳結果を表示する。"""
+        output_area = cast(RichLog, self.query_one("#output"))
+        output_area.clear()
+
+        output_area.write(result.translated)
+
+        status_bar = cast(StatusBar, self.query_one("#status-bar"))
+        if result.error:
+            status_bar.set_status("✗ 翻訳失敗")
+        else:
+            status_bar.set_status("✓ 翻訳完了")
+
+        self._is_translating = False
+
     def action_toggle_direction(self) -> None:
         """Tabキーで翻訳方向を切り替えるアクション。"""
-        direction_toggle = self.query_one("#direction-toggle")
+        direction_toggle = cast(DirectionToggle, self.query_one("#direction-toggle"))
         direction_toggle.toggle()
 
 
