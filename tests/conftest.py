@@ -1,7 +1,9 @@
 """Shared test fixtures for translator tests."""
 
+import os
 import pytest
 from collections import namedtuple
+from pathlib import Path
 from unittest.mock import MagicMock
 
 
@@ -38,3 +40,10 @@ def pytest_configure(config):
         "markers", "integration: marks tests as integration tests (requires actual Ollama connection)"
     )
     config.option.asyncio_mode = "auto"
+
+
+@pytest.fixture
+def glossary_path():
+    """glossary.json の絶対パスを返す."""
+    rootdir = Path(__file__).parent.parent
+    return os.path.join(rootdir, "glossary.json")
