@@ -1,0 +1,28 @@
+[project]
+name = "code-translator"
+version = "0.1.0"
+description = "TranslateGemma based coding translation TUI tool for Japanese-English translation"
+requires-python = ">=3.10"
+dependencies = [
+    "textual>=0.85.0",
+    "ollama>=0.4.0",
+    "pyperclip>=1.9.0",
+]
+license = "MIT"
+
+[tool.setuptools]
+py-modules = ["app", "translator"]
+
+[project.scripts]
+codetranslate = "app:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-mock>=3.10.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
