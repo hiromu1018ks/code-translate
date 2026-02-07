@@ -503,6 +503,367 @@ class TestCodeTranslateAppKeyBindings:
                 assert call_tracker["called"], "Ctrl+Enter should trigger action_translate"
 
 
+class TestCodeTranslateAppLastResult:
+    """Tests for _last_result instance variable."""
+
+    async def test_last_result_initialized_to_none(self):
+        """_last_resultが初期状態でNoneであることを確認"""
+        from app import CodeTranslateApp
+
+        app = CodeTranslateApp()
+        assert hasattr(app, "_last_result"), "App should have _last_result attribute"
+        assert app._last_result is None, "_last_result should be None initially"
+
+    async def test_display_result_updates_last_result(self, mocker):
+        """_display_result()が_last_resultを更新することを確認"""
+        from app import CodeTranslateApp
+        from translator import TranslationResult
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+
+        async with CodeTranslateApp().run_test() as pilot:
+            result = TranslationResult(
+                original="テスト",
+                translated="Test",
+                direction="ja_to_en",
+                error=False
+            )
+
+            # Direct call for testing
+            pilot.app._display_result(result)
+            await pilot.pause()
+
+            assert pilot.app._last_result is not None, "_last_result should be updated"
+            assert pilot.app._last_result.translated == "Test", "_last_result should contain the translation"
+            assert pilot.app._last_result.original == "テスト", "_last_result should contain the original text"
+
+    async def test_last_result_preserved_across_translations(self, mocker):
+        """複数の翻訳で_last_resultが適切に更新されることを確認"""
+        from app import CodeTranslateApp
+        from translator import TranslationResult
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+
+        async with CodeTranslateApp().run_test() as pilot:
+            # First translation
+            result1 = TranslationResult(
+                original="最初の翻訳",
+                translated="First translation",
+                direction="ja_to_en",
+                error=False
+            )
+            pilot.app._display_result(result1)
+            await pilot.pause()
+
+            assert pilot.app._last_result.translated == "First translation"
+
+            # Second translation - should replace the first
+            result2 = TranslationResult(
+                original="二番目の翻訳",
+                translated="Second translation",
+                direction="ja_to_en",
+                error=False
+            )
+            pilot.app._display_result(result2)
+            await pilot.pause()
+
+            assert pilot.app._last_result.translated == "Second translation"
+            assert pilot.app._last_result.original == "二番目の翻訳"
+
+
+class TestCodeTranslateAppActionCopyResult:
+    """Tests for action_copy_result method."""
+
+    async def test_action_copy_result_copies_to_clipboard(self, mocker):
+        """翻訳結果がクリップボードにコピーされることを確認"""
+        from app import CodeTranslateApp
+        from translator import TranslationResult
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+        mock_pyperclip = mocker.patch("pyperclip.copy")
+
+        async with CodeTranslateApp().run_test() as pilot:
+            status_bar = pilot.app.query_one("#status-bar")
+
+            # Set up last result
+            result = TranslationResult(
+                original="テスト",
+                translated="Test translation",
+                direction="ja_to_en",
+                error=False
+            )
+            pilot.app._last_result = result
+
+            # Call copy action
+            pilot.app.action_copy_result()
+            await pilot.pause()
+
+            # Verify pyperclip.copy was called with correct text
+            mock_pyperclip.assert_called_once_with("Test translation")
+
+            # Verify status bar shows success message
+            status_text = str(status_bar.render())
+            assert "翻訳結果をコピーしました" in status_text or "📋" in status_text
+
+    async def test_action_copy_result_does_nothing_when_no_result(self, mocker):
+        """_last_resultがNoneの場合は何もしないことを確認"""
+        from app import CodeTranslateApp
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+        mock_pyperclip = mocker.patch("pyperclip.copy")
+
+        async with CodeTranslateApp().run_test() as pilot:
+            status_bar = pilot.app.query_one("#status-bar")
+
+            # Set last result to None
+            pilot.app._last_result = None
+
+            # Call copy action
+            pilot.app.action_copy_result()
+            await pilot.pause()
+
+            # Verify pyperclip.copy was NOT called
+            mock_pyperclip.assert_not_called()
+
+            # Status should not have changed
+            status_text = str(status_bar.render())
+
+    async def test_action_copy_result_handles_pyperclip_error(self, mocker):
+        """pyperclipエラーを適切にハンドリングすることを確認"""
+        from app import CodeTranslateApp
+        from translator import TranslationResult
+        import pyperclip
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+
+        # Mock pyperclip.copy to raise exception
+        mock_pyperclip = mocker.patch("pyperclip.copy", side_effect=pyperclip.PyperclipException("Clipboard not available"))
+
+        async with CodeTranslateApp().run_test() as pilot:
+            status_bar = pilot.app.query_one("#status-bar")
+
+            # Set up last result
+            result = TranslationResult(
+                original="テスト",
+                translated="Test",
+                direction="ja_to_en",
+                error=False
+            )
+            pilot.app._last_result = result
+
+            # Call copy action
+            pilot.app.action_copy_result()
+            await pilot.pause()
+
+            # Verify error message shown in status bar
+            status_text = str(status_bar.render())
+            assert "クリップボードコピー失敗" in status_text or "✗" in status_text
+
+    async def test_action_copy_result_preserves_last_result(self, mocker):
+        """コピー後に_last_resultが保持されることを確認"""
+        from app import CodeTranslateApp
+        from translator import TranslationResult
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+        mock_pyperclip = mocker.patch("pyperclip.copy")
+
+        async with CodeTranslateApp().run_test() as pilot:
+            # Set up last result
+            result = TranslationResult(
+                original="テスト",
+                translated="Test translation",
+                direction="ja_to_en",
+                error=False
+            )
+            pilot.app._last_result = result
+
+            # Call copy action
+            pilot.app.action_copy_result()
+            await pilot.pause()
+
+            # Verify last result is still intact
+            assert pilot.app._last_result is not None
+            assert pilot.app._last_result.translated == "Test translation"
+
+
+class TestCodeTranslateAppActionClear:
+    """Tests for action_clear method."""
+
+    async def test_action_clear_clears_input_area(self, mocker):
+        """入力エリアがクリアされることを確認"""
+        from app import CodeTranslateApp
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+
+        async with CodeTranslateApp().run_test() as pilot:
+            input_area = pilot.app.query_one("#input")
+
+            # Add some text to input
+            input_area.text = "テキストを入力"
+
+            # Call clear action
+            pilot.app.action_clear()
+            await pilot.pause()
+
+            # Input should be empty
+            assert input_area.text == "", "Input area should be cleared"
+
+    async def test_action_clear_clears_output_area(self, mocker):
+        """出力エリアがクリアされることを確認"""
+        from app import CodeTranslateApp
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+
+        async with CodeTranslateApp().run_test() as pilot:
+            output_area = pilot.app.query_one("#output")
+
+            # Add some content to output
+            output_area.write("翻訳結果")
+
+            # Verify output has content
+            assert len(output_area.lines) > 0
+
+            # Call clear action
+            pilot.app.action_clear()
+            await pilot.pause()
+
+            # Output should be empty
+            assert len(output_area.lines) == 0, "Output area should be cleared"
+
+    async def test_action_clear_resets_last_result(self, mocker):
+        """_last_resultがNoneにリセットされることを確認"""
+        from app import CodeTranslateApp
+        from translator import TranslationResult
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+
+        async with CodeTranslateApp().run_test() as pilot:
+            # Set up last result
+            result = TranslationResult(
+                original="テスト",
+                translated="Test",
+                direction="ja_to_en",
+                error=False
+            )
+            pilot.app._last_result = result
+
+            assert pilot.app._last_result is not None
+
+            # Call clear action
+            pilot.app.action_clear()
+            await pilot.pause()
+
+            # last_result should be reset to None
+            assert pilot.app._last_result is None, "_last_result should be reset to None"
+
+    async def test_action_clear_returns_focus_to_input(self, mocker):
+        """クリア後に入力エリアにフォーカスが戻ることを確認"""
+        from app import CodeTranslateApp
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+
+        async with CodeTranslateApp().run_test() as pilot:
+            input_area = pilot.app.query_one("#input")
+            output_area = pilot.app.query_one("#output")
+
+            # Focus output area first
+            output_area.focus()
+            await pilot.pause()
+
+            # Verify output has focus
+            assert output_area.has_focus
+            assert not input_area.has_focus
+
+            # Call clear action
+            pilot.app.action_clear()
+            await pilot.pause()
+
+            # Input should have focus
+            assert input_area.has_focus, "Input area should have focus after clear"
+            assert not output_area.has_focus
+
+
+class TestCodeTranslateAppKeyBindingsCopyClear:
+    """Tests for key bindings - Ctrl+Y (copy) and Ctrl+L (clear)."""
+
+    async def test_ctrl_y_triggers_copy_action(self, mocker):
+        """Ctrl+Yキーでaction_copy_resultがトリガーされることを確認"""
+        from app import CodeTranslateApp
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+        mock_pyperclip = mocker.patch("pyperclip.copy")
+
+        async with CodeTranslateApp().run_test() as pilot:
+            # Set up last result
+            from translator import TranslationResult
+            result = TranslationResult(
+                original="テスト",
+                translated="Test",
+                direction="ja_to_en",
+                error=False
+            )
+            pilot.app._last_result = result
+
+            # Mock action_copy_result to track calls
+            call_tracker = {"called": False}
+            original_action = pilot.app.action_copy_result
+
+            def mock_copy_result():
+                call_tracker["called"] = True
+            pilot.app.action_copy_result = mock_copy_result
+
+            # Press Ctrl+Y
+            await pilot.press("ctrl+y")
+            await pilot.pause()
+
+            # Verify action was called
+            assert call_tracker["called"], "Ctrl+Y should trigger action_copy_result"
+
+            # Restore original action
+            pilot.app.action_copy_result = original_action
+
+    async def test_ctrl_l_triggers_clear_action(self, mocker):
+        """Ctrl+Lキーでaction_clearがトリガーされることを確認"""
+        from app import CodeTranslateApp
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+
+        async with CodeTranslateApp().run_test() as pilot:
+            # Mock action_clear to track calls
+            call_tracker = {"called": False}
+            original_action = pilot.app.action_clear
+
+            def mock_clear():
+                call_tracker["called"] = True
+            pilot.app.action_clear = mock_clear
+
+            # Press Ctrl+L
+            await pilot.press("ctrl+l")
+            await pilot.pause()
+
+            # Verify action was called
+            assert call_tracker["called"], "Ctrl+L should trigger action_clear"
+
+            # Restore original action
+            pilot.app.action_clear = original_action
+
+    async def test_bindings_have_show_flag(self):
+        """Ctrl+YとCtrl+Lのキーバインディングにshow=Trueが設定されていることを確認"""
+        from app import CodeTranslateApp
+
+        app = CodeTranslateApp()
+
+        # Find copy binding (Ctrl+Y)
+        copy_bindings = [b for b in app.BINDINGS if "ctrl+y" in b.key]
+        assert len(copy_bindings) > 0, "Should have Ctrl+Y binding"
+        assert copy_bindings[0].show is True, "Ctrl+Y should have show=True"
+
+        # Find clear binding (Ctrl+L)
+        clear_bindings = [b for b in app.BINDINGS if "ctrl+l" in b.key]
+        assert len(clear_bindings) > 0, "Should have Ctrl+L binding"
+        assert clear_bindings[0].show is True, "Ctrl+L should have show=True"
+
+
 class TestCodeTranslateAppIntegrationFullFlow:
     """Integration tests for full translation flow."""
 
