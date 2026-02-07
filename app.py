@@ -266,7 +266,17 @@ class CodeTranslateApp(App[None]):
             return
 
         status_bar = cast(StatusBar, self.query_one("#status-bar"))
-        status_bar.set_status("⏳ 翻訳中...")
+
+        # 長いテキストのチェック - 翻訳中メッセージに予測時間を含める
+        char_count = len(text)
+        if char_count >= 5000:
+            estimated_time = max(5, (char_count // 1000) * 3)
+            status_bar.set_status(
+                f"⏳ 長いテキスト翻訳中... (予測: 約{estimated_time}秒)",
+                "bold yellow"
+            )
+        else:
+            status_bar.set_status("⏳ 翻訳中...")
 
         direction_toggle = cast(DirectionToggle, self.query_one("#direction-toggle"))
         direction = direction_toggle.direction
@@ -285,9 +295,31 @@ class CodeTranslateApp(App[None]):
         output_area = cast(RichLog, self.query_one("#output"))
         output_area.clear()
 
+        status_bar = cast(StatusBar, self.query_one("#status-bar"))
+
+        # Handle code-only input
+        if result.is_code_only:
+            output_area.write("[bold yellow]翻訳対象のテキストがありません[/bold yellow]")
+            output_area.write("入力にはコードブロックのみが含まれています。")
+            status_bar.set_status("✗ コードのみの入力", "yellow")
+            self._is_translating = False
+            return
+
+        # Handle empty translation result
+        if result.is_empty_result:
+            output_area.write("[bold yellow]翻訳結果が空でした[/bold yellow]")
+            output_area.write("入力テキストを確認するか、再度翻訳を試してください。")
+            status_bar.set_status("✗ 結果が空", "yellow")
+            self._is_translating = False
+            return
+
+        # Show warning if present
+        if result.warning:
+            output_area.write(f"[bold yellow]{result.warning}[/bold yellow]")
+            output_area.write("")
+
         output_area.write(result.translated)
 
-        status_bar = cast(StatusBar, self.query_one("#status-bar"))
         if result.error:
             status_bar.set_status("✗ 翻訳失敗")
         else:

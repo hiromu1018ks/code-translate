@@ -358,7 +358,11 @@ class TestCodeTranslateAppRunTranslation:
             "original": "テスト",
             "translated": "Test",
             "direction": "ja_to_en",
-            "error": False
+            "error": False,
+            "warning": None,
+            "is_code_only": False,
+            "is_empty_result": False,
+            "estimated_time": None
         })()
 
         async with CodeTranslateApp().run_test() as pilot:
@@ -1080,3 +1084,122 @@ class TestTask2_5FooterAndBindings:
 
         assert len(visible_keys) == len(visible_keys_set), \
             f"Visible bindings should have unique keys. Duplicates found: {[k for k in visible_keys if visible_keys.count(k) > 1]}"
+
+
+class TestEdgeCaseHandling:
+    """Tests for edge case UI feedback."""
+
+    async def test_long_text_shows_warning(self, mocker):
+        """5000文字以上で警告が表示される"""
+        from app import CodeTranslateApp
+        from translator import TranslationResult
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+
+        # Mock translate to return result with warning
+        mock_result = TranslationResult(
+            original="x" * 5000,
+            translated="y" * 5000,
+            direction="ja_to_en",
+            error=False,
+            warning="テキストが長いです (5000文字)。翻訳には約15秒かかる見込みです。"
+        )
+        mock_translate = mocker.patch("translator.CodeTranslator.translate", return_value=mock_result)
+
+        async with CodeTranslateApp().run_test() as pilot:
+            input_area = pilot.app.query_one("#input")
+            input_area.text = "x" * 5000
+
+            await pilot.press("ctrl+j")
+            await pilot.pause()
+
+            output_area = pilot.app.query_one("#output")
+            output_lines = list(output_area.lines)
+            output_text = str(output_lines)
+            # Warning should be shown in output
+            assert "長いテキスト" in output_text or "5000文字" in output_text
+
+    async def test_code_only_shows_message(self, mocker):
+        """コードのみ入力でメッセージが表示される"""
+        from app import CodeTranslateApp
+        from translator import TranslationResult
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+
+        mock_result = TranslationResult(
+            original="```python\ncode\n```",
+            translated="```python\ncode\n```",
+            direction="ja_to_en",
+            error=False,
+            is_code_only=True
+        )
+        mock_translate = mocker.patch("translator.CodeTranslator.translate", return_value=mock_result)
+
+        async with CodeTranslateApp().run_test() as pilot:
+            input_area = pilot.app.query_one("#input")
+            input_area.text = "```python\ncode\n```"
+
+            await pilot.press("ctrl+j")
+            await pilot.pause()
+
+            output_area = pilot.app.query_one("#output")
+            output_lines = list(output_area.lines)
+            output_text = str(output_lines)
+            assert "翻訳対象のテキストがありません" in output_text or "コードブロックのみ" in output_text
+
+    async def test_empty_result_shows_message(self, mocker):
+        """空の翻訳結果でメッセージが表示される"""
+        from app import CodeTranslateApp
+        from translator import TranslationResult
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+
+        mock_result = TranslationResult(
+            original="test",
+            translated="",
+            direction="ja_to_en",
+            error=False,
+            is_empty_result=True
+        )
+        mock_translate = mocker.patch("translator.CodeTranslator.translate", return_value=mock_result)
+
+        async with CodeTranslateApp().run_test() as pilot:
+            input_area = pilot.app.query_one("#input")
+            input_area.text = "test"
+
+            await pilot.press("ctrl+j")
+            await pilot.pause()
+
+            output_area = pilot.app.query_one("#output")
+            output_lines = list(output_area.lines)
+            output_text = str(output_lines)
+            assert "翻訳結果が空でした" in output_text or "空でした" in output_text
+
+    async def test_stripped_translation_displayed(self, mocker):
+        """接頭辞が除去された翻訳結果が正しく表示される"""
+        from app import CodeTranslateApp
+        from translator import TranslationResult
+
+        mock_check = mocker.patch("translator.CodeTranslator.check_connection", return_value=(True, "OK"))
+
+        # Simulate translation with prefix that was stripped
+        mock_result = TranslationResult(
+            original="テスト",
+            translated="This is the translation result.",
+            direction="ja_to_en",
+            error=False
+        )
+        mock_translate = mocker.patch("translator.CodeTranslator.translate", return_value=mock_result)
+
+        async with CodeTranslateApp().run_test() as pilot:
+            input_area = pilot.app.query_one("#input")
+            input_area.text = "テスト"
+
+            await pilot.press("ctrl+j")
+            await pilot.pause()
+
+            output_area = pilot.app.query_one("#output")
+            output_lines = list(output_area.lines)
+            output_text = str(output_lines)
+            # The prefix should NOT be in the output
+            assert "Here is the translation:" not in output_text

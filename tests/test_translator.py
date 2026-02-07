@@ -824,3 +824,148 @@ class TestBuildGlossaryHint:
         # Regular terms should NOT have suffix
         assert "変数 → variable (do not translate)" not in hint
         assert "変数 → variable" in hint
+
+
+class TestEstimateTranslationTime:
+    """Test suite for _estimate_translation_time method."""
+
+    def test_short_text_returns_zero(self):
+        """短いテキスト（5000文字未満）で0秒を返す"""
+        translator = CodeTranslator()
+        result = translator._estimate_translation_time(1000)
+        assert result == 0
+
+    def test_exactly_threshold_returns_zero(self):
+        """閾値ちょうど（5000文字）で0秒を返す"""
+        translator = CodeTranslator()
+        result = translator._estimate_translation_time(4999)
+        assert result == 0
+
+    def test_long_text_calculates_time(self):
+        """長いテキストで時間が計算される"""
+        translator = CodeTranslator()
+        result = translator._estimate_translation_time(6000)
+        assert result == 18  # (6000 // 1000) * 3 = 18
+
+    def test_very_long_text_calculates_time(self):
+        """非常に長いテキストで時間が計算される"""
+        translator = CodeTranslator()
+        result = translator._estimate_translation_time(10000)
+        assert result == 30  # (10000 // 1000) * 3 = 30
+
+    def test_minimum_time_is_five_seconds(self):
+        """最小時間が5秒保証される"""
+        translator = CodeTranslator()
+        result = translator._estimate_translation_time(5001)
+        assert result >= 5
+
+
+class TestIsCodeOnlyInput:
+    """Test suite for _is_code_only_input method."""
+
+    def test_code_only_input_returns_true(self):
+        """コードのみの入力でTrueを返す"""
+        translator = CodeTranslator()
+        text = '```python\ndef hello():\n    pass\n```'
+        protected, placeholders = translator._protect_code_blocks(text)
+        result = translator._is_code_only_input(protected, placeholders, len(text))
+        assert result is True
+
+    def test_text_with_code_returns_false(self):
+        """テキスト付きコードでFalseを返す"""
+        translator = CodeTranslator()
+        text = '以下を実装してください：\n```python\ndef hello():\n    pass\n```'
+        protected, placeholders = translator._protect_code_blocks(text)
+        result = translator._is_code_only_input(protected, placeholders, len(text))
+        assert result is False
+
+    def test_no_code_blocks_returns_false(self):
+        """コードブロックなしでFalseを返す"""
+        translator = CodeTranslator()
+        text = 'これは通常のテキストです。'
+        protected, placeholders = translator._protect_code_blocks(text)
+        result = translator._is_code_only_input(protected, placeholders, len(text))
+        assert result is False
+
+    def test_empty_input_returns_false(self):
+        """空の入力でFalseを返す"""
+        translator = CodeTranslator()
+        text = ''
+        protected, placeholders = translator._protect_code_blocks(text)
+        result = translator._is_code_only_input(protected, placeholders, len(text))
+        assert result is False
+
+
+class TestStripTranslationPrefixes:
+    """Test suite for _strip_translation_prefixes method."""
+
+    def test_strips_here_is_the_translation(self):
+        """'Here is the translation:'が除去される"""
+        translator = CodeTranslator()
+        text = "Here is the translation:\nThis is the result."
+        result = translator._strip_translation_prefixes(text)
+        assert result == "This is the result."
+        assert "Here is the translation:" not in result
+
+    def test_strips_japanese_prefix(self):
+        """'翻訳:'が除去される"""
+        translator = CodeTranslator()
+        text = "翻訳:\nこれは結果です。"
+        result = translator._strip_translation_prefixes(text)
+        assert "翻訳:" not in result
+        assert "これは結果です。" in result
+
+    def test_strips_nihongo_yaku_prefix(self):
+        """'日本語訳:'が除去される"""
+        translator = CodeTranslator()
+        text = "日本語訳:\nこれは結果です。"
+        result = translator._strip_translation_prefixes(text)
+        assert "日本語訳:" not in result
+
+    def test_normal_text_unchanged(self):
+        """通常のテキストは変更されない"""
+        translator = CodeTranslator()
+        text = "This is a normal translation."
+        result = translator._strip_translation_prefixes(text)
+        assert result == "This is a normal translation."
+
+    def test_strips_multiple_variants(self):
+        """複数の接頭辞パターンが除去される"""
+        translator = CodeTranslator()
+        # Test "Translation:" prefix
+        text1 = "Translation:\nResult here"
+        result1 = translator._strip_translation_prefixes(text1)
+        assert "Translation:" not in result1
+
+        # Test "Here's the translation:" prefix
+        text2 = "Here's the translation:\nResult here"
+        result2 = translator._strip_translation_prefixes(text2)
+        assert "Here's the translation:" not in result2
+
+
+class TestIsEmptyTranslation:
+    """Test suite for _is_empty_translation method."""
+
+    def test_empty_string_returns_true(self):
+        """空文字でTrueを返す"""
+        translator = CodeTranslator()
+        result = translator._is_empty_translation("")
+        assert result is True
+
+    def test_whitespace_only_returns_true(self):
+        """空白のみでTrueを返す"""
+        translator = CodeTranslator()
+        result = translator._is_empty_translation("   \n\t  ")
+        assert result is True
+
+    def test_normal_text_returns_false(self):
+        """通常のテキストでFalseを返す"""
+        translator = CodeTranslator()
+        result = translator._is_empty_translation("This is text.")
+        assert result is False
+
+    def test_newlines_only_returns_true(self):
+        """改行のみでTrueを返す"""
+        translator = CodeTranslator()
+        result = translator._is_empty_translation("\n\n\n")
+        assert result is True

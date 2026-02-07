@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import json
 import os
 import re
-from typing import Literal, Any
+from typing import Literal, Any, Optional
 
 import httpx
 import ollama
@@ -22,6 +22,11 @@ class TranslationResult:
     translated: str
     direction: str
     error: bool = False
+    # New edge case fields (all Optional with defaults)
+    warning: Optional[str] = None      # User-facing warning
+    is_code_only: bool = False         # Code-only input
+    is_empty_result: bool = False      # Empty translation result
+    estimated_time: Optional[int] = None  # Estimated time (seconds)
 
 
 class CodeTranslator:
@@ -35,6 +40,21 @@ class CodeTranslator:
 
 
 {TEXT}"""
+
+    # エッジケース処理用定数
+    LONG_TEXT_THRESHOLD = 5000
+    TIME_ESTIMATE_PER_1000_CHARS = 3
+    TRANSLATION_PREFIXES = [
+        "Here is the translation:",
+        "Here's the translation:",
+        "Translation:",
+        "The translation is:",
+        "翻訳:",
+        "日本語訳:",
+    ]
+    LONG_TEXT_WARNING = "テキストが長いです ({chars}文字)。翻訳には約{seconds}秒かかる見込みです。"
+    CODE_ONLY_MESSAGE = "翻訳対象のテキストがありません（コードブロックのみ）"
+    EMPTY_RESULT_MESSAGE = "翻訳結果が空でした。入力を確認してください。"
 
     def __init__(self, model: str | None = None):
         """Initialize CodeTranslator with specified model.
@@ -136,6 +156,55 @@ class CodeTranslator:
         for placeholder, code_block in placeholders.items():
             restored_text = restored_text.replace(placeholder, code_block)
         return restored_text
+
+    def _estimate_translation_time(self, char_count: int) -> int:
+        """文字数に基づいて翻訳時間を推定"""
+        if char_count < self.LONG_TEXT_THRESHOLD:
+            return 0
+        return max(5, (char_count // 1000) * self.TIME_ESTIMATE_PER_1000_CHARS)
+
+    def _is_code_only_input(self, protected_text: str, placeholders: dict[str, str], original_length: int) -> bool:
+        """入力がコードブロックのみかどうかを判定
+
+        Args:
+            protected_text: コードブロックが保護されたテキスト
+            placeholders: プレースホルダーからコードへのマッピング
+            original_length: 元のテキストの長さ
+
+        Returns:
+            コードのみの入力の場合はTrue
+        """
+        if not placeholders:
+            return False
+        non_placeholder_length = len(protected_text)
+        for placeholder in placeholders.keys():
+            non_placeholder_length -= len(placeholder)
+        return non_placeholder_length < original_length * 0.1 and len(placeholders) > 0
+
+    def _strip_translation_prefixes(self, text: str) -> str:
+        """TranslateGemma の接頭辞を除去（大文字小文字を区別しない）"""
+        lines = text.split('\n')
+        # 先頭の空行を除去
+        while lines and not lines[0].strip():
+            lines.pop(0)
+
+        if not lines:
+            return text.strip()
+
+        for prefix in self.TRANSLATION_PREFIXES:
+            first_line = lines[0].strip()
+            # 大文字小文字を区別しないマッチング
+            if first_line.lower().startswith(prefix.lower()):
+                # 元の大文字小文字を保持して置換
+                lines[0] = lines[0].replace(prefix, '', 1).strip()
+                if not lines[0]:
+                    lines.pop(0)
+                break
+        return '\n'.join(lines).strip()
+
+    def _is_empty_translation(self, text: str) -> bool:
+        """翻訳結果が空かどうかを判定"""
+        return not text or not text.strip()
 
     def _load_glossary(self, path: str) -> dict[str, Any]:
         """Load glossary from JSON file.
@@ -266,12 +335,34 @@ class CodeTranslator:
             direction: "ja_to_en" or "en_to_ja"
 
         Returns:
-            TranslationResult with original, translated, and direction
+            TranslationResult with original, translated, direction, and edge case info
         """
         if not text:
             return TranslationResult(original="", translated="", direction=direction)
 
+        # Protect code blocks first
         protected_text, placeholders = self._protect_code_blocks(text)
+
+        # Check if code-only input
+        is_code_only = self._is_code_only_input(protected_text, placeholders, len(text))
+        if is_code_only:
+            return TranslationResult(
+                original=text,
+                translated=text,  # Return original for code-only
+                direction=direction,
+                error=False,
+                is_code_only=True
+            )
+
+        # Estimate time for long texts
+        char_count = len(text)
+        estimated_time = self._estimate_translation_time(char_count)
+
+        # Build warning for long texts
+        warning = None
+        if estimated_time > 0:
+            warning = LONG_TEXT_WARNING.format(chars=char_count, seconds=estimated_time)
+
         prompt = self._build_prompt(protected_text, direction)
 
         try:
@@ -279,9 +370,30 @@ class CodeTranslator:
                 model=self.MODEL, messages=[{"role": "user", "content": prompt}]
             )
             translated_text = response.message.content or ""
+
+            # Strip translation prefixes
+            translated_text = self._strip_translation_prefixes(translated_text)
+
+            # Check for empty result
+            is_empty = self._is_empty_translation(translated_text)
+            if is_empty:
+                return TranslationResult(
+                    original=text,
+                    translated=EMPTY_RESULT_MESSAGE,
+                    direction=direction,
+                    error=False,
+                    is_empty_result=True,
+                    warning=warning
+                )
+
             restored_text = self._restore_code_blocks(translated_text, placeholders)
             return TranslationResult(
-                original=text, translated=restored_text, direction=direction, error=False
+                original=text,
+                translated=restored_text,
+                direction=direction,
+                error=False,
+                warning=warning,
+                estimated_time=estimated_time
             )
         except ConnectionError:
             return TranslationResult(
