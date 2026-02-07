@@ -270,4 +270,9 @@ class CodeTranslateApp(App[None]):
 
 def main():
     """CodeTranslate TUI Application entry point."""
-    pass
+    app = CodeTranslateApp()
+    app.run()
+
+
+if __name__ == "__main__":
+    main()
